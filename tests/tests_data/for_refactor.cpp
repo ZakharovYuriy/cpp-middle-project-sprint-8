@@ -4,13 +4,13 @@
 class Base {
 public:
     virtual void method() = 0;
-    virtual ~Base() {}
+    ~Base() {}
 };
 
 class Derived : public Base {
 public:
-    virtual void method() override {};
-    ~Derived() {}
+    virtual void method() {};
+    virtual ~Derived() {}
 };
 
 class MyType {
@@ -22,9 +22,9 @@ public:
 
 void foo() {
     std::vector<int> v1;
-    for (const auto& x1 : v1) {
+    for (const auto x1 : v1) {
     }
     std::vector<MyType> vec = {{1, "obj1"}, {2, "obj2"}, {3, "obj3"}};
-    for (const auto& x12 : vec) {
+    for (const auto x12 : vec) {
     }
 }

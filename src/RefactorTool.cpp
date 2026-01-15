@@ -27,7 +27,7 @@ void RefactorHandler::run(const MatchFinder::MatchResult &Result) {
         handle_nv_dtor(Dtor, Diag, SM);
     }
 
-    if (const auto *Method = Result.Nodes.getNodeAs<CXXMethodDecl>("methodDecl");
+    if (const auto *Method = Result.Nodes.getNodeAs<CXXMethodDecl>("missingOverride");
         Method && Method->size_overridden_methods() > 0 && !Method->hasAttr<OverrideAttr>()) {
         handle_miss_override(Method, Diag, SM);
     }
@@ -145,19 +145,19 @@ auto NvDtorMatcher() {
     // 6 добавлены narrowing-фильтры: деструктор не virtual и не implicit
     // 7 исключены деструкторы, объявленные в системных заголовках
     // 8 найденному деструктору присвоено имя - в выводе clang-query он будет помечен как "nonVirtualDtor" (binds here)
-    return cxxRecordDecl(
-        isDefinition(),
-        hasAnyBase(cxxBaseSpecifier(hasType(cxxRecordDecl(
-            has(cxxDestructorDecl(unless(isVirtual()), unless(isImplicit()), unless(isExpansionInSystemHeader()))
-                    .bind("nonVirtualDtor")))))));
+    return cxxRecordDecl(isDefinition(),
+                         hasAnyBase(cxxBaseSpecifier(hasType(cxxRecordDecl(hasMethod(
+                             cxxDestructorDecl(unless(isVirtual()), unless(isImplicit()), isExpansionInMainFile())
+                                 .bind("nonVirtualDtor")))))));
 }
 
 // матчеры для поиска методов без override
 auto NoOverrideMatcher() {
     // 1 поиск узла - метод
     // 2 переопределяет базовый метод Но не имеет атрибута Override
-    return cxxMethodDecl(isOverride(), unless(hasAttr(attr::Override)), unless(isExpansionInSystemHeader()))
-        .bind("methodDecl");
+    return cxxMethodDecl(isOverride(), unless(hasAttr(attr::Override)), isExpansionInMainFile(),
+                         unless(cxxConstructorDecl()), unless(cxxDestructorDecl()), unless(isImplicit()))
+        .bind("missingOverride");
 }
 
 // матчеры для поиска range-for без &
@@ -169,10 +169,10 @@ auto NoRefConstVarInRangeLoopMatcher() {
     // 5 исключение фундаментальных типов (int, char, double и т.п.)
     // 6 ограничение анализом только пользовательского кода
     // 7 привязка найденной переменной цикла под именем "loopVar"
-    return cxxForRangeStmt(
-        isExpansionInMainFile(),
-        hasLoopVariable(varDecl(hasType(qualType(isConstQualified(), unless(referenceType()), unless(builtinType()))))
-                            .bind("loopVar")));
+    return cxxForRangeStmt(isExpansionInMainFile(),
+                           hasLoopVariable(varDecl(hasType(qualType(isConstQualified(), unless(referenceType()),
+                                                                    unless(pointerType()), unless(builtinType()))))
+                                               .bind("loopVar")));
 }
 
 // Конструктор принимает Rewriter для изменения кода.
