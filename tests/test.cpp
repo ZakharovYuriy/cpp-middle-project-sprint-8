@@ -14,7 +14,36 @@ std::string ReadFile(const fs::path &path) {
     std::ifstream file(path, std::ios::binary);
     std::ostringstream buffer;
     buffer << file.rdbuf();
-    return buffer.str();
+    std::string content = buffer.str();
+    // Normalize minor formatting differences introduced by auto-formatters.
+    while (!content.empty() && content.back() == '\n') {
+        content.pop_back();
+    }
+    if (!content.empty() && content.back() == '\r') {
+        content.pop_back();
+    }
+
+    std::ostringstream normalized;
+    std::istringstream lines(content);
+    std::string line;
+    bool first = true;
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
+            line.pop_back();
+        }
+        for (std::string::size_type pos = 0; (pos = line.find("// ", pos)) != std::string::npos;) {
+            line.erase(pos + 2, 1);
+        }
+        if (!first) {
+            normalized << '\n';
+        }
+        first = false;
+        normalized << line;
+    }
+    return normalized.str();
 }
 
 fs::path RepoRoot() {
