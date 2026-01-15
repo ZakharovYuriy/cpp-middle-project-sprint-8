@@ -37,36 +37,103 @@ void RefactorHandler::run(const MatchFinder::MatchResult &Result) {
     }
 }
 
-// todo: необходимо реализовать обработку случая невиртуального деструктора
+// обработкa случая невиртуального деструктора
 void RefactorHandler::handle_nv_dtor(const CXXDestructorDecl *Dtor, DiagnosticsEngine &Diag, SourceManager &SM) {
-    // Реализуйте Ваш код ниже
+    // 1 позиция символа '~' (начало имени деструктора)
+    SourceLocation TildeLoc = Dtor->getLocation();
+    if (TildeLoc.isInvalid() || TildeLoc.isMacroID())
+        return;
+
+    // 2 по заданию: проверяем, что это основной файл
+    if (!SM.isWrittenInMainFile(TildeLoc))
+        return;
+
+    // 3 защита от дублей: один и тот же деструктор может матчиться много раз
+    SourceLocation FileLoc = SM.getFileLoc(TildeLoc);
+    unsigned Key = SM.getFileOffset(FileLoc);
+
+    if (!virtualDtorLocations.insert(Key).second)
+        return;
+
+    // 4 вставляем "virtual " перед '~'
+    Rewrite.InsertTextBefore(TildeLoc, "virtual ");
+
     const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Объявлен деструктор");
     Diag.Report(Dtor->getLocation(), DiagID);
 }
 
-// todo: необходимо реализовать обработку случая отсутствие override
+// обработкa случая отсутствие override
 void RefactorHandler::handle_miss_override(const CXXMethodDecl *Method, DiagnosticsEngine &Diag, SourceManager &SM) {
-    // Реализуйте Ваш код ниже
+    const auto &LangOpts = Method->getASTContext().getLangOpts();
+
+    // 1 стартуем с конца имени метода
+    SourceLocation Loc = Method->getNameInfo().getEndLoc();
+    if (Loc.isInvalid() || Loc.isMacroID())
+        return;
+
+    // 2 сдвигаемся в позицию "после имени"
+    Loc = clang::Lexer::getLocForEndOfToken(Loc, 0, SM, LangOpts);
+    if (Loc.isInvalid() || Loc.isMacroID())
+        return;
+
+    // 3 сканируем токены вперёд до закрывающей ')'
+    clang::Token Tok;
+    SourceLocation InsertLoc;
+
+    while (true) {
+        if (clang::Lexer::getRawToken(Loc, Tok, SM, LangOpts, /*IgnoreWhiteSpace=*/true))
+            return;
+
+        if (Tok.is(clang::tok::r_paren)) {
+            InsertLoc = clang::Lexer::getLocForEndOfToken(Tok.getLocation(), 0, SM, LangOpts);
+            break;
+        }
+
+        // шаг к следующему токену
+        Loc = clang::Lexer::getLocForEndOfToken(Tok.getLocation(), 0, SM, LangOpts);
+        if (Loc.isInvalid() || Loc.isMacroID())
+            return;
+    }
+
+    if (InsertLoc.isInvalid() || InsertLoc.isMacroID())
+        return;
+
+    // 4 вставляем override сразу после ')'
+    Rewrite.InsertText(InsertLoc, " override", /*InsertAfter=*/true, /*IndentNewLines=*/false);
+
     const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Объявлен метод");
     Diag.Report(Method->getLocation(), DiagID);
 }
 
-// todo: необходимо реализовать обработку случая отсутствие & в range-for
+// обработкa случая отсутствие & в range-for
 void RefactorHandler::handle_crange_for(const VarDecl *LoopVar, DiagnosticsEngine &Diag, SourceManager &SM) {
-    // Реализуйте Ваш код ниже
     const unsigned DiagID = Diag.getCustomDiagID(DiagnosticsEngine::Remark, "Объявлена переменная");
     Diag.Report(LoopVar->getLocation(), DiagID);
-}
 
-// todo: ниже необходимо реализовать матчеры для поиска узлов AST
-// note: синтаксис написания матчеров точно такой же как и для использования clang-query
-/*
-    Пример того, как может выглядеть реализация:
-    auto AllClassesMatcher()
-    {
-        return cxxRecordDecl().bind("classDecl");
-    }
-*/
+    // 1 получаем информацию о том, как тип записан в исходнике
+    const TypeSourceInfo *TSI = LoopVar->getTypeSourceInfo();
+    if (!TSI)
+        return;
+
+    TypeLoc TL = TSI->getTypeLoc();
+    if (TL.isNull())
+        return;
+
+    // 2 конец участка текста, описывающего тип
+    SourceLocation TypeEnd = TL.getEndLoc();
+    if (TypeEnd.isInvalid() || TypeEnd.isMacroID())
+        return;
+
+    // 3 позиция сразу после последнего токена типа
+    const LangOptions &LangOpts = LoopVar->getASTContext().getLangOpts();
+    SourceLocation InsertLoc = clang::Lexer::getLocForEndOfToken(TypeEnd, 0, SM, LangOpts);
+
+    if (InsertLoc.isInvalid() || InsertLoc.isMacroID())
+        return;
+
+    // 4 вставляем '&' после типа
+    Rewrite.InsertText(InsertLoc, "&", /*InsertAfter=*/true, /*IndentNewLines=*/false);
+}
 
 // матчеры для поиска невиртуальных деструкторов
 auto NvDtorMatcher() {
@@ -95,12 +162,17 @@ auto NoOverrideMatcher() {
 
 // матчеры для поиска range-for без &
 auto NoRefConstVarInRangeLoopMatcher() {
-    // 1 поиск узлов CXXForRangeStmt
-    // 2 поиск внутри цикла переменную цикла
-    // 3 добавлен фильтры с помощью Narrowing Matchers, который проверяет, что тип переменной константный
-    // 4 присвоен найденному узлу имя - в выводе clang-query этот узел будет помечен как "loopVar" binds here
+    // 1 поиск узлов CXXForRangeStmt (range-based for)
+    // 2 поиск переменной цикла (loop variable)
+    // 3 фильтрация: тип переменной должен быть const-qualified
+    // 4 исключение случаев, когда тип уже является ссылкой (T&, const T&)
+    // 5 исключение фундаментальных типов (int, char, double и т.п.)
+    // 6 ограничение анализом только пользовательского кода
+    // 7 привязка найденной переменной цикла под именем "loopVar"
     return cxxForRangeStmt(
-        hasLoopVariable(varDecl(hasType(isConstQualified()), unless(isExpansionInSystemHeader())).bind("loopVar")));
+        isExpansionInMainFile(),
+        hasLoopVariable(varDecl(hasType(qualType(isConstQualified(), unless(referenceType()), unless(builtinType()))))
+                            .bind("loopVar")));
 }
 
 // Конструктор принимает Rewriter для изменения кода.
