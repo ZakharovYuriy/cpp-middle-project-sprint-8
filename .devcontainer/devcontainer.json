@@ -1,12 +1,12 @@
 {
   "name": "Ubuntu25.04 with GCC15",
   "build": {
-      "dockerfile": "./Dockerfile",
-      "context": ".",
-      "args": {
-        "USER_UID": "${localEnv:USER_UID}",
-        "USER_GID": "${localEnv:USER_GID}"
-      }
+    "dockerfile": "Dockerfile",
+    "context": ".",
+    "args": {
+      "USER_UID": "${localEnv:USER_UID:1000}",
+      "USER_GID": "${localEnv:USER_GID:1000}"
+    }
   },
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "remoteUser": "dev",
@@ -24,7 +24,7 @@
     }
   },
   "mounts": [
-    "source=${env:HOME}/.gitconfig,target=/home/dev/.gitconfig,type=bind,consistency=cached",
-    "source=${env:HOME}/.conan2,target=/home/dev/.conan2,type=bind,consistency=cached"
+    "source=${localEnv:USERPROFILE}\\.gitconfig,target=/home/dev/.gitconfig,type=bind,consistency=cached",
+    "source=${localEnv:USERPROFILE}\\.conan2,target=/home/dev/.conan2,type=bind,consistency=cached"
   ]
 }
